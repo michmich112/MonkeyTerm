@@ -1,0 +1,164 @@
+package main
+
+import (
+	//"monkeyterm/src/tui"
+	"bufio"
+	"fmt"
+	"io"
+	"math"
+	"os"
+	"strings"
+	"time"
+
+	"golang.org/x/term"
+)
+
+type CustomReader struct {
+	Readable []byte	//Keeps track of what is readable
+	UserInput []byte //Keeps track of all user inputs
+	CursorLocationX int //Keeps track of the cursor X location
+	CursorLocationY int //Keeps track of the cursor Y location
+	Prompt string // Keeps track of the current user prompt
+	Displayed []byte //Keeps track of all that is currently displayed
+}
+
+type CustomWriter struct {
+
+}
+
+func (cr CustomReader) Read(p []byte) (n int, err error) {
+	if len(cr.Readable) == 0 {
+		return 0, nil
+	}	
+	l := 0	
+	if cap(p) > len(cr.Readable) {
+		l = len(cr.Readable)
+	} else {
+		l = cap(p)
+	}
+	for i := 0; i < l; i++ {
+		p[i] = cr.Readable[i]
+		//cr.Readable = cr.Readable[1:]
+	}
+
+	fmt.Printf("l=%+v", l)
+	return l, nil
+}
+
+
+
+// func (cr CustomReader) Read(p []byte) (n int, err error) {
+// 	return os.Stdin.Read(p)
+// }
+//func (cr CustomReader) test() {}
+
+func AddSpaces(x int, val string) (frontPad int, backPad int, res string) {
+	if len(val) < x {
+		i := float64(x-len(val)) / 2
+		frontPad = int(math.Floor(i))
+		backPad = int(math.Ceil(i))
+		res = strings.Repeat(" ", frontPad) + val + strings.Repeat(" ", backPad)
+		return
+	}
+	return 0, 0, val
+}
+
+func colorPrompt(prompt string) string {
+	return fmt.Sprintf("\x1B[38;5;242m%s\x1B[39m",prompt)
+}
+
+func main() {
+	// r := tui.NewLightRenderer(
+	// 	&tui.ColorTheme{},
+	// 	false,
+	// 	false,
+	// 	2,
+	// 	true,
+	// 	false,
+	// 	func(int)(int) {return 10},
+	// )
+	// for{
+	// 	r.Refresh()
+	// }
+	require('config.compe-config')
+
+	old, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		panic(err)
+	}
+
+	//x,y,err := term.GetSize(int(os.Stdout.Fd()))
+	//fmt.Printf("x- %+v ,\n\ry- %+v\n\r err- %+v\n", x,y,err)
+	defer term.Restore(int(os.Stdin.Fd()), old)
+
+	r := CustomReader{}
+
+	rw := struct {
+		io.Reader
+		io.Writer
+	}{r, os.Stdout}
+
+	//t := term.NewTerminal(os.Stdin,"")
+	t := term.NewTerminal(rw, "")
+
+	// a, err := t.Write([]byte("   hello World"))
+
+	prompt := "Hello Worldo"
+	coloredPrompt := colorPrompt(prompt)
+
+
+	//fmt.Printf("a = %+v\n\r",a)
+	x, _, err := term.GetSize(int(os.Stdout.Fd()))
+	fmt.Printf("x = %+v\n\r", x)
+
+	t.Write([]byte(strings.Repeat(" ", x)))
+	frontPad, _, val := AddSpaces(x, coloredPrompt)
+	t.Write([]byte(val))
+	//t.Write([]byte("\x1B[1A"))
+	t.Write([]byte(fmt.Sprintf("\r\x1B[%dC", frontPad)))
+	//t.Write([]byte{'\x9B','1','A','\r', '\x9B', byte(frontPad), byte('C')})
+
+	//charBuff = []byte("       Hello Worldo")
+
+//	b := make([]byte, 5)
+	//r.Readable = make([]byte, 10)
+	go func() {
+		cReader := bufio.NewReaderSize(os.Stdin,1)
+		for {
+			b, _ := cReader.ReadByte()
+			r.Readable = append(r.Readable, b)
+			time.Sleep(100 * time.Millisecond)
+		}
+	}()
+
+	for {
+		//fmt.Printf("IN\n")
+		 // l, err := os.Stdin.Read(b)
+		// if err != nil {
+		// 	panic(err)
+		// }
+		// if l > 0 {
+		// 	t.Write(b)
+		// }
+		//fmt.Printf("OUT\n")
+		//r.Readable = b
+		// if l > 0 {
+		// 	r.Readable = append(r.Readable, b...)
+		// }
+		//if err != nil {
+		//	panic(err)
+		//}
+		//if l != 0 {
+		//t.Write(b)
+		//}
+		line, err := t.ReadLine()
+		if err != nil {
+			panic(err)
+		}
+		if line != "" {
+			fmt.Printf("\n\r Line: %+v\n\r", line)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+}
