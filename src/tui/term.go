@@ -257,14 +257,14 @@ func (t *Term) ClearToTopOfPage() (error) {
 	return nil
 }
 
-func (t *Term) WritePage([]byte) (error) {
-	t.L.Lock()
-
-	// Todo Implement this
-
-	t.L.Unlock()
-	return nil
-}
+// func (t *Term) WritePage([]byte) (error) {
+// 	t.L.Lock()
+//
+// 	// Todo Implement this
+//
+// 	t.L.Unlock()
+// 	return nil
+// }
 
 
 // restores the terminal to its pervious state
