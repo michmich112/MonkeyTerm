@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"golang.org/x/term"
 	"golang.org/x/exp/slices"
+	"golang.org/x/term"
 )
 
 
@@ -31,9 +31,14 @@ type Term struct {
 	terminal *term.Terminal	
 	obL *sync.Mutex
 	outBuf []byte
+	escapeCodes []int
 }
 
-func NewTerm() (*Term, error){
+func NewTerm(escapeCodes []int) (*Term, error){
+	if len(escapeCodes) == 0 {
+		return new(Term), errors.New("At least one escape code is required.")
+	}
+
 	tty := &Tty{
 		in: os.Stdin,
 		out: os.Stdout,
@@ -63,6 +68,7 @@ func NewTerm() (*Term, error){
 		isRaw: true,
 		saved: saved,
 		terminal: nt,
+		escapeCodes: escapeCodes,
 	}
 	return t,nil
 }
@@ -274,10 +280,15 @@ func (t *Term) ClearCanvas(){
 
 }
 
+func (t *Term) ClearExit() {
+	t.GoToPageStart()
+}
 
-func (t *Term) Start() {
+
+func (t *Term) Start(actionFn func (event *TermEvent)) {
 	reader := bufio.NewReader(t.tty.in)
 	b := make([]byte,1)
+	event := new(TermEvent)
 	active := true
 	for active {
 		l, err := reader.Read(b)
@@ -286,25 +297,17 @@ func (t *Term) Start() {
 			defer fmt.Printf("Read Error: %+v\n",err)
 		}
 		if l > 0 {
-			switch rune(b[0]) {
-			case 'c':
-				t.GoToPageStart()
-			case 'e':
-				t.WriteRune('\n')
-			case 'q':
-				t.ClearToTopOfPage()
-			case 'p':
-				t.bufCursorDown()
-			case 3:
-				active = false
-			default:
-				t.OutputByte(b[0])
+			if slices.Contains(t.escapeCodes, int(b[0])) {
+				active = false	
+			} else {
+				event.UpdateFromRune(rune(b[0]))
+				actionFn(event)
+			}
+			if len(t.outBuf) > 0 {
+				t.WriteOutBuf()
 			}
 		}
-		if len(t.outBuf) > 0 {
-			t.WriteOutBuf()
-		}
 	}
-
+	t.ClearExit()
 }
 
