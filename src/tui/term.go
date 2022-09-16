@@ -37,7 +37,7 @@ type Term struct {
 	escapeCodes []int
 	started bool
 	reqBuf bool
-	bufIn []byte
+	escBuf []byte
 }
 
 func NewTerm(escapeCodes []int) (*Term, error){
@@ -66,6 +66,7 @@ func NewTerm(escapeCodes []int) (*Term, error){
 	nt := term.NewTerminal(tty.in, "")
 
 
+	// change from blocking to nonblock
 	syscall.SetNonblock(int(tin.Fd()), false)
 
 	t := &Term{
@@ -99,13 +100,10 @@ func (t *Term) getTerminalCursorPosition(tty *os.File) (x,y int, err error) {
 
 	var reader *bufio.Reader
 	if t.started {
-		r := bytes.NewReader(t.bufIn)
-
+		r := bytes.NewReader(t.escBuf)
 		reader = bufio.NewReader(r)
-
 	} else {
 		reader = bufio.NewReader(tty)
-
 	}
 	// text := make([]byte, 10)
 	// _, err = reader.Read(text)
@@ -114,6 +112,7 @@ func (t *Term) getTerminalCursorPosition(tty *os.File) (x,y int, err error) {
 	if err != nil {
 		return 0,0, err
 	}
+	fmt.Printf("Nst %+v", text)
 	if slices.Contains(text, byte(';')) {
 		re := regexp.MustCompile(`\d+;\d+`)
 		pos := strings.Split(re.FindString(string(text)), ";")
@@ -125,6 +124,20 @@ func (t *Term) getTerminalCursorPosition(tty *os.File) (x,y int, err error) {
 		return x,y, nil
 	}
 	return 0, 0, errors.New("Invalid Return from ANSI Sequence")
+}
+
+func (t *Term) MakeCursorInvisible() {
+	t.L.Lock()
+	t.outputBytes([]byte("\x1B[?25l"))
+	t.writeOutBuf()
+	t.L.Unlock()
+}
+
+func (t *Term) MakeCursorVisible() {
+	t.L.Lock()
+	t.outputBytes([]byte("\x1B[?25h"))
+	t.writeOutBuf()
+	t.L.Unlock()
 }
 
 func (t *Term) InitialX() (int) {
@@ -411,6 +424,21 @@ func (t *Term) IsEscapeCode(input byte) bool {
 // 	wg.Wait()
 // }
 
+var CSI_END_CHAR = []rune{
+	'R', // Return from cursor position request
+}
+
+// Reads the buffer and returns weather the escape code is complete
+func (t *Term) HandleEscCode(buffer []byte) bool {
+	// Manage CSI
+	if buffer[0] == '\x9B' {
+		if slices.Contains(CSI_END_CHAR, rune(buffer[len(buffer)-1])) {
+			return true
+		}
+	}
+	return false // this not good
+}
+
 func (t *Term) Start(handler func (t *Term, input byte, err error)) {
 	wg := sync.WaitGroup{}
 
@@ -420,29 +448,50 @@ func (t *Term) Start(handler func (t *Term, input byte, err error)) {
 		t.started = true
 		// event := new(TermEvent)
 		active := true
+
+		escCodeBuffer := make([]byte,0)
+		buffering := false
 		for active {
 			l, err := reader.Read(b)
 
 		  //t.WriteRune('a')
 			// t.WriteOutBuf()
 			if err != nil {
-				// active = false
-				// fmt.Printf("Read Error: %+v\n",err)
-				// handler(t, 0, err) // handler with error
-				// panic("test")
+				active = false
+				fmt.Printf("Read Error: %+v\n",err)
+				handler(t, 0, err) // handler with error
+				panic("test")
 			}
-			if (t.reqBuf) {
-				t.bufIn = append(t.bufIn, b[0])
-			}
+
+   		//
+			// if (t.reqBuf) {
+			// 	t.bufIn = append(t.bufIn, b[0])
+			// }
+   		//
 
 			if l > 0 {
-				if slices.Contains(t.escapeCodes, int(b[0])) {
-					active = false	
-				} 	
-				handler(t, b[0], nil) // handler call
+				if !buffering {
+					if rune(b[0]) == '\x9B' {
+						buffering = true
+						escCodeBuffer = append(escCodeBuffer, b[0])
+						continue // no op
+					}
+					if slices.Contains(t.escapeCodes, int(b[0])) {
+						active = false	
+					} 	
+					handler(t, b[0], nil) // handler call
 
-				if len(t.outBuf) > 0 {
-					t.WriteOutBuf()
+					if len(t.outBuf) > 0 {
+						t.WriteOutBuf()
+					}
+				} else {
+					escCodeBuffer = append(escCodeBuffer,b[0])
+					if t.HandleEscCode(escCodeBuffer) { // this is the end of the esc sequence
+						// Share Escape Code
+						t.escBuf = escCodeBuffer
+						escCodeBuffer = escCodeBuffer[:0]
+						buffering = false
+					}
 				}
 			}
 		}

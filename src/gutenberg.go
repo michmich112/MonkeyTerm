@@ -47,6 +47,7 @@ func NewGutenberg() (*Gutenberg) {
 		panic(err)
 	}
 
+	t.MakeCursorInvisible()
 	// t.OutputBytes([]byte("Hello World\n"))
 	// t.OutputBytes([]byte(fmt.Sprintf("x:%d, y:%d\n",t.InitialX(), t.InitalY())))
 	// x,y, _ := t.GetCursorPosition()
@@ -307,13 +308,12 @@ func (s *Section) Reprint(text []byte) error {
 	AddAction(func(t *tui.Term) {t.UnsafeOutputBytes([]byte(out))}).
 	Execute()
 
-
-	//x,y, err := s.gutenberg.Term.GetCursorPosition()
-	//if err != nil {
-		//panic("tset")
-		//s.gutenberg.O.Unlock()
-	//}
-
+	// x,y, err := s.gutenberg.Term.GetCursorPosition()
+	// if err != nil {
+	// 	s.gutenberg.O.Unlock()
+	// 	//panic("tset")
+	// }
+ //
 	// s.gutenberg.Term.GotoRelativePosition(s.Start,0)
 	// s.gutenberg.Term.OutputBytes([]byte(out))
 	// s.gutenberg.Term.GotoPosition(x,y)
