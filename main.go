@@ -15,10 +15,9 @@ func MakeTermLoop(g *src.Gutenberg) core.InputEventHandler {
 		case core.InputEvent_Rune:
 			text = append(text, byte(event.GetEventValue()))
 			g.Sections["Main"].Reprint(text)
-		default: 
-      text = append(text, byte(event.GetEventValue()))
-			g.Sections["Main"].Reprint(text)
-
+		// default: 
+  //     text = append(text, byte(event.GetEventValue()))
+		// 	g.Sections["Main"].Reprint(text)
 		} 
 	}
 	// return func (event *core.InputEventInstance) {
@@ -95,7 +94,7 @@ func main() {
 
 	g.AddSection("Main", mainSection)
 
-	//g.RegisterPollHandler(MakeHeaderHandler(g))
+	g.RegisterPollHandler(MakeHeaderHandler(g))
 	g.RegisterInputHandler(MakeTermLoop(g))
 
 	//g.RegisterInputHandler(MakeTermLoop(g))

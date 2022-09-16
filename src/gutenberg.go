@@ -63,7 +63,7 @@ func NewGutenbergFromTerm(term *tui.Term) (*Gutenberg) {
 	return &Gutenberg{
 		O: &sync.Mutex{},
 		Term: term,
-		Delay: time.Duration(10000),
+		Delay: time.Duration(100 * time.Millisecond),
 		Sections: make(map[string]GutenbergSection),
 		// sectionHandlerWg: sync.WaitGroup{},
 		InputEventBus: NewInputEventBus(),
@@ -147,7 +147,7 @@ func (g *Gutenberg) termHandler(term *tui.Term, input byte, err error) {
 }
 
 func (g *Gutenberg) Start() {
-	//g.EventWg.Add(3)	
+	g.EventWg.Add(3)	
 	// input event handler goroutine
 	go func() {
 		c := g.InputEventBus.Receive()
@@ -157,7 +157,7 @@ func (g *Gutenberg) Start() {
 			}
 		}
 		// Make sure to close the bus channel
-		//g.EventWg.Done()
+		g.EventWg.Done()
 	}()
 
 	// poll event handler
@@ -170,23 +170,23 @@ func (g *Gutenberg) Start() {
 			}
 		}
 		// Make sure to close the bus channel to reach here
-		//g.EventWg.Done()
+		g.EventWg.Done()
 	}()
 
 	// Polling GoRoutine
-	//polling := true
-	//go func() {
-		//for polling {
-			//time.Sleep(g.Delay)
-			//g.PollEventBus.Send(core.PollEvent{T: time.Now()})
-		//}
-		//g.EventWg.Done()
-	//}()
+	polling := true
+	go func() {
+		for polling {
+			time.Sleep(g.Delay)
+			g.PollEventBus.Send(core.PollEvent{T: time.Now()})
+		}
+		g.EventWg.Done()
+	}()
 
 
 	g.Term.Start(g.termHandler)
-	//polling = false
-	//g.EventWg.Wait()
+	polling = false
+	g.EventWg.Wait()
 }
 
 func (g *Gutenberg) End() {
