@@ -100,6 +100,7 @@ func main() {
 	//g.RegisterInputHandler(MakeTermLoop(g))
 	g.MoveToSection("Main")
 	g.Start()
+	g.End()
 
 }
 

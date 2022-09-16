@@ -181,6 +181,7 @@ func (g *Gutenberg) Start() {
 			time.Sleep(g.Delay)
 			g.PollEventBus.Send(core.PollEvent{T: time.Now()})
 		}
+		g.PollEventBus.Close()
 		g.EventWg.Done()
 	}()
 
@@ -191,6 +192,7 @@ func (g *Gutenberg) Start() {
 }
 
 func (g *Gutenberg) End() {
+	g.Term.MakeCursorVisible()
 	g.Term.Restore()
 }
 
