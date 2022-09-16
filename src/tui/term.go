@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+	_ "time"
 
 	"golang.org/x/exp/slices"
 	"golang.org/x/term"
@@ -32,6 +35,9 @@ type Term struct {
 	obL *sync.Mutex
 	outBuf []byte
 	escapeCodes []int
+	started bool
+	reqBuf bool
+	bufIn []byte
 }
 
 func NewTerm(escapeCodes []int) (*Term, error){
@@ -39,10 +45,13 @@ func NewTerm(escapeCodes []int) (*Term, error){
 		return new(Term), errors.New("At least one escape code is required.")
 	}
 
+	tin := os.Stdin
+	// tin := TtyIn()
+
 	tty := &Tty{
-		in: os.Stdin,
-		out: os.Stdout,
-		fd: int(os.Stdin.Fd()),
+		in: tin,
+		out: os.Stderr,
+		fd: int(tin.Fd()),
 	}
 
 	if !term.IsTerminal(tty.fd) {
@@ -53,31 +62,55 @@ func NewTerm(escapeCodes []int) (*Term, error){
 	if err != nil {
 		return new(Term), err
 	}
-	
-	x, y, err := getTerminalCursorPosition(tty.in)
-	if err != nil {
-		return new(Term), err
-	}
 
 	nt := term.NewTerminal(tty.in, "")
 
+
+	syscall.SetNonblock(int(tin.Fd()), false)
+
 	t := &Term{
 		L: &sync.Mutex{},
-		initialPosition: [2]int{x,y},
+		// initialPosition: [2]int{x,y},
 		tty: tty,
 		isRaw: true,
 		saved: saved,
 		terminal: nt,
 		escapeCodes: escapeCodes,
 	}
+
+	x, y, err := t.getTerminalCursorPosition(tty.in)
+	if err != nil {
+		return new(Term), err
+	}
+
+	t.initialPosition = [2]int{x,y}
+
+
 	return t,nil
 }
 
+
+
+
 // get the current x, y postion of the cursor for any tty (should be put in raw mode)
-func getTerminalCursorPosition(tty *os.File) (x,y int, err error) {
+// the lock should be held when doing this operation
+func (t *Term) getTerminalCursorPosition(tty *os.File) (x,y int, err error) {
 	tty.Write([]byte("\x1B[6n"))
-	reader := bufio.NewReader(tty)
+
+	var reader *bufio.Reader
+	if t.started {
+		r := bytes.NewReader(t.bufIn)
+
+		reader = bufio.NewReader(r)
+
+	} else {
+		reader = bufio.NewReader(tty)
+
+	}
+	// text := make([]byte, 10)
+	// _, err = reader.Read(text)
 	text, err := reader.ReadSlice('R')
+
 	if err != nil {
 		return 0,0, err
 	}
@@ -102,11 +135,46 @@ func (t *Term) InitalY() (int) {
 	return t.initialPosition[1]
 }
 
+// Gets the available width of the terminal
+func (t *Term) GetWidth() (int, error) {
+	x,_,err :=  term.GetSize(t.tty.fd)
+	if err != nil {
+		return 0, err
+	}
+	return x, nil
+}
+
+// Gets the available inline heigh based on the starting location
+func (t *Term) GetAvailableHeight() (int, error) {
+	if y, err := t.GetHeight(); err != nil {
+		return y, err
+	} else {
+		return y-t.InitalY(), nil
+	}
+}
+
+func (t *Term) GetHeight() (int, error) {
+	_, y, err := term.GetSize(t.tty.fd)
+	if err != nil {
+		return 0, err
+	}
+	return y, nil
+}
+
 // gets the current x,y position of the cursor
 func (t *Term) GetCursorPosition() (x,y int, err error){
 	t.L.Lock()
-	x,y, err = getTerminalCursorPosition(t.tty.in)
+	x,y, err = t.getTerminalCursorPosition(t.tty.in)
 	t.L.Unlock()
+	return
+}
+
+// gets the curren x,y position of the cursor relative to the initial starting postition (only y)
+func (t *Term) GetRelativeCursorPosition() (x,y int, err error) {
+	x, y, err =  t.GetCursorPosition()
+	if err == nil {
+		y = y-t.InitalY()
+	}
 	return
 }
 
@@ -114,7 +182,7 @@ func (t *Term) GetCursorPosition() (x,y int, err error){
 // Lock must be held
 // !!unsafe
 func (t *Term) getCursorPosition() (x, y int, err error) {
-	x,y, err = getTerminalCursorPosition(t.tty.in)
+	x,y, err = t.getTerminalCursorPosition(t.tty.in)
 	return
 }
 
@@ -136,6 +204,20 @@ func (t *Term) PeekUserInput() ([]byte, error) {
 func (t *Term) bufGotoPosition(x,y int) {
 	t.outBuf = append(t.outBuf, []byte(fmt.Sprintf("\x1B[%d;%dH",x,y))...)
 	//_, err := t.tty.in.Write([]byte(fmt.Sprintf("\x1B[%d;%dH",y,x)))
+}
+
+// Goes to the defined position on the terminal (not relative to starting point)
+func (t *Term) GotoPosition(x, y int) {
+	// maybe we should check if the values are outside the available canvas
+	// t.L.Lock()
+	t.bufGotoPosition(x, y)
+	t.writeOutBuf() // write out all from the buffer
+	// t.L.Unlock()
+} 
+
+// Goes to the desired position on the terminal relative to the starting point
+func (t *Term) GotoRelativePosition(x, y int) {
+	t.GotoPosition(x+t.InitialX(), y+t.InitalY())
 }
 
 // Appends an ANSI earase line code to the output buffer
@@ -168,6 +250,10 @@ func (t *Term) OutputByte(byte byte) {
 // !!unsafe
 func (t *Term) outputBytes(bytes []byte) {
 	t.outBuf = append(t.outBuf, bytes...)
+}
+
+func (t *Term) UnsafeOutputBytes(bytes []byte) {
+	t.outputBytes(bytes)
 }
 
 // adds bytes to output buffer to be printed
@@ -284,30 +370,124 @@ func (t *Term) ClearExit() {
 	t.GoToPageStart()
 }
 
-
-func (t *Term) Start(actionFn func (event *TermEvent)) {
-	reader := bufio.NewReader(t.tty.in)
-	b := make([]byte,1)
-	event := new(TermEvent)
-	active := true
-	for active {
-		l, err := reader.Read(b)
-		if err != nil {
-			active = false
-			defer fmt.Printf("Read Error: %+v\n",err)
-		}
-		if l > 0 {
-			if slices.Contains(t.escapeCodes, int(b[0])) {
-				active = false	
-			} else {
-				event.UpdateFromRune(rune(b[0]))
-				actionFn(event)
-			}
-			if len(t.outBuf) > 0 {
-				t.WriteOutBuf()
-			}
-		}
-	}
-	t.ClearExit()
+func (t *Term) IsEscapeCode(input byte) bool {
+	return slices.Contains(t.escapeCodes, int(input))
 }
+
+// func (t *Term) Start(actionFn func (event *TermEvent)) {
+// 	wg := sync.WaitGroup{}
+//
+// 	go func () {
+// 		reader := bufio.NewReader(t.tty.in)
+// 		b := make([]byte,1)
+// 		event := new(TermEvent)
+// 		active := true
+// 		for active {
+// 			l, err := reader.Read(b)
+// 			t.WriteRune('a')
+// 			t.WriteOutBuf()
+// 			if err != nil {
+// 				active = false
+// 				defer fmt.Printf("Read Error: %+v\n",err)
+// 			}
+// 			if l > 0 {
+// 				if slices.Contains(t.escapeCodes, int(b[0])) {
+// 					active = false	
+//
+// 				} else {
+// 					event.UpdateFromRune(rune(b[0]))
+// 					actionFn(event)
+// 				}
+// 				if len(t.outBuf) > 0 {
+// 					t.WriteOutBuf()
+// 				}
+// 			}
+// 		}
+// 		t.ClearExit()
+// 		wg.Done()
+// 	}()
+//
+// 	wg.Add(1)
+// 	wg.Wait()
+// }
+
+func (t *Term) Start(handler func (t *Term, input byte, err error)) {
+	wg := sync.WaitGroup{}
+
+	go func () {
+		reader := bufio.NewReader(t.tty.in)
+		b := make([]byte,1)
+		t.started = true
+		// event := new(TermEvent)
+		active := true
+		for active {
+			l, err := reader.Read(b)
+
+		  //t.WriteRune('a')
+			// t.WriteOutBuf()
+			if err != nil {
+				// active = false
+				// fmt.Printf("Read Error: %+v\n",err)
+				// handler(t, 0, err) // handler with error
+				// panic("test")
+			}
+			if (t.reqBuf) {
+				t.bufIn = append(t.bufIn, b[0])
+			}
+
+			if l > 0 {
+				if slices.Contains(t.escapeCodes, int(b[0])) {
+					active = false	
+				} 	
+				handler(t, b[0], nil) // handler call
+
+				if len(t.outBuf) > 0 {
+					t.WriteOutBuf()
+				}
+			}
+		}
+		t.ClearExit()
+		wg.Done()
+	}()
+
+	wg.Add(1)
+	wg.Wait()
+}
+
+
+func (t *Term) SaveCursorPosition() {
+	t.OutputBytes([]byte("\x1B 7"))
+}
+
+func (t *Term) RestoreCursorPosition() {
+	t.OutputBytes([]byte("\x1B 8"))
+}
+
+type TermTx struct {
+	t *Term
+	actions []func(t *Term)
+}
+
+func NewTermTx(t *Term) *TermTx{
+	return &TermTx{
+		actions: make([]func(t *Term), 0),
+		t: t,
+	}
+}
+
+//Term transaction builder
+func (t *TermTx) AddAction(f func(t *Term)) *TermTx {
+	t.actions = append(t.actions, f)
+	return t
+}
+
+func (t *TermTx) Execute() {
+	t.t.L.Lock()
+	for _, f := range(t.actions) {
+		f(t.t)
+	}
+	t.t.writeOutBuf() //write out all changes
+	t.t.L.Unlock()
+}
+
 
